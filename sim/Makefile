@@ -1,33 +1,30 @@
 ###############################################################################
-#                         I2C VIP MAKEFILE
-###############################################################################
-
-###############################################################################
-# Silent Mode
+#                         I2C UVM MAKEFILE
 ###############################################################################
 
 .SILENT:
 compile
 simulate
+gui
 regression
-usage
 clean
+usage
 
 ###############################################################################
-# Ignore Errors
+# Variables
 ###############################################################################
 
-.IGNORE:
-compile
-simulate
+TOP      = tb_top
+WORK     = work
+FLIST    = i2c_compile.f
 
-###############################################################################
-# Default Variables
-###############################################################################
-
-TOP              = tb_top
-WORK             = work
-FLIST            = i2c_compile.f
+TESTS = \
+	test_sanity_reset \
+	test_manual_mode_matrix \
+	test_auto_mode_matrix \
+	test_reactive_exceptions \
+	test_interrupt_standalone \
+	test_error_recovery_stress
 
 ifndef test
 override test = test_sanity_reset
@@ -37,49 +34,37 @@ ifndef seed
 override seed = random
 endif
 
-ifndef uvm_verbosity
-override uvm_verbosity = UVM_MEDIUM
+ifndef verbosity
+override verbosity = UVM_MEDIUM
 endif
 
-ifndef test_folder
-override test_folder = logs/$(test)
-endif
-
-ifndef regression_list
-override regression_list = full.list
-endif
+LOGDIR = logs/$(test)
 
 ###############################################################################
 # Usage
 ###############################################################################
 
 usage:
-
 	echo ""
-	echo "============================================================"
-	echo "                    I2C VIP MAKEFILE"
-	echo "============================================================"
+	echo "=============== I2C UVM REGRESSION FLOW ==============="
 	echo ""
 	echo "Compile"
-	echo "    make compile"
+	echo "  make compile"
 	echo ""
 	echo "Run Single Test"
-	echo "    make simulate test=test_sanity_reset"
+	echo "  make simulate test=test_sanity_reset"
 	echo ""
 	echo "Run GUI"
-	echo "    make gui test=test_sanity_reset"
+	echo "  make gui test=test_manual_mode_matrix"
 	echo ""
-	echo "Run Regression"
-	echo "    make regression"
+	echo "Run With Seed"
+	echo "  make simulate test=test_auto_mode_matrix seed=100"
 	echo ""
-	echo "Run Smoke Regression"
-	echo "    make regression regression_list=smoke.list"
-	echo ""
-	echo "Run with Seed"
-	echo "    make simulate test=test_sanity_reset seed=10"
+	echo "Run Full Regression"
+	echo "  make regression"
 	echo ""
 	echo "Clean"
-	echo "    make clean"
+	echo "  make clean"
 	echo ""
 
 ###############################################################################
@@ -97,44 +82,44 @@ compile:
 	vlog \
 	-sv \
 	+acc \
-	+cover=bcesft \
-	+fcover \
 	-mfcu \
 	-timescale 1ns/1ps \
+	+cover=bcesft \
+	+fcover \
 	-f $(FLIST) \
 	-l compile.log
 
 	make compile_report
 
 ###############################################################################
-# Simulation
+# Single Test Run
 ###############################################################################
 
 simulate:
 
-	mkdir -p $(test_folder)
+	mkdir -p $(LOGDIR)
 
 	vsim \
 	work.$(TOP) \
-	-voptargs=+acc=npr \
+	-c \
 	-sva \
 	-coverage \
+	-voptargs=+acc \
 	+UVM_TESTNAME=$(test) \
-	+UVM_VERBOSITY=$(uvm_verbosity) \
+	+UVM_VERBOSITY=$(verbosity) \
 	-sv_seed $(seed) \
-	-l $(test_folder)/run.log \
-	-wlf $(test_folder)/waveform.wlf \
-	-c \
+	-l $(LOGDIR)/run.log \
+	-wlf $(LOGDIR)/waveform.wlf \
 	-do "run -all; \
-	     coverage save $(test_folder)/coverage.ucdb; \
+	     coverage save $(LOGDIR)/coverage.ucdb; \
 	     quit -f"
 
 	make sim_report
 
 	vcover report \
 	-html \
-	$(test_folder)/coverage.ucdb \
-	-htmldir $(test_folder)/coverage_html
+	$(LOGDIR)/coverage.ucdb \
+	-htmldir $(LOGDIR)/coverage_html
 
 ###############################################################################
 # GUI
@@ -144,8 +129,9 @@ gui:
 
 	vsim \
 	work.$(TOP) \
+	-coverage \
 	+UVM_TESTNAME=$(test) \
-	+UVM_VERBOSITY=$(uvm_verbosity)
+	+UVM_VERBOSITY=$(verbosity)
 
 ###############################################################################
 # Regression
@@ -155,12 +141,18 @@ regression:
 
 	make compile
 
-	python3 regression.py $(regression_list)
+	for t in $(TESTS); do \
+		echo ""; \
+		echo "===================================="; \
+		echo "Running $$t"; \
+		echo "===================================="; \
+		$(MAKE) simulate test=$$t; \
+	done
 
 	make merge_cov
 
 ###############################################################################
-# Merge Coverage
+# Coverage Merge
 ###############################################################################
 
 merge_cov:
@@ -178,25 +170,9 @@ merge_cov:
 	-htmldir merged_cov_html
 
 	echo ""
-	echo "Merged Coverage Report"
-	echo "firefox merged_cov_html/index.html &"
-
-###############################################################################
-# Cleaning
-###############################################################################
-
-clean_compile:
-
-	rm -rf work
-	rm -rf compile.log
-	rm -rf transcript
-
-clean:
-
-	make clean_compile
-	rm -rf logs
-	rm -rf merged_cov.ucdb
-	rm -rf merged_cov_html
+	echo "Merged Coverage Generated"
+	echo "merged_cov_html/index.html"
+	echo ""
 
 ###############################################################################
 # Compile Report
@@ -205,13 +181,14 @@ clean:
 compile_report:
 
 	echo ""
-	echo "================ Compilation Report ================="
+	echo "========== COMPILE REPORT =========="
+	echo ""
 
-	grep "Error" compile.log
+	grep -i error compile.log
 
 	echo ""
 
-	grep "Warning" compile.log
+	grep -i warning compile.log
 
 	echo ""
 
@@ -222,34 +199,93 @@ compile_report:
 sim_report:
 
 	echo ""
-	echo "================ Simulation Report ================="
-
+	echo "========== SIMULATION REPORT =========="
 	echo ""
 
 	echo "UVM_FATAL"
-	grep UVM_FATAL $(test_folder)/run.log
+	grep UVM_FATAL $(LOGDIR)/run.log
 
 	echo ""
 
 	echo "UVM_ERROR"
-	grep UVM_ERROR $(test_folder)/run.log
+	grep UVM_ERROR $(LOGDIR)/run.log
 
 	echo ""
 
 	echo "UVM_WARNING"
-	grep UVM_WARNING $(test_folder)/run.log
+	grep UVM_WARNING $(LOGDIR)/run.log
 
 	echo ""
 
-	echo "Log File"
-	echo "$(test_folder)/run.log"
+	echo "Log File:"
+	echo "$(LOGDIR)/run.log"
 
 	echo ""
 
-	echo "Waveform"
-	echo "vsim -view $(test_folder)/waveform.wlf &"
+	echo "Waveform:"
+	echo "vsim -view $(LOGDIR)/waveform.wlf"
 
 	echo ""
 
-	echo "Coverage"
-	echo "firefox $(test_folder)/coverage_html/index.html &"
+###############################################################################
+# Cleaning
+###############################################################################
+
+clean_compile:
+
+	rm -rf work
+	rm -rf transcript
+	rm -rf compile.log
+
+clean:
+
+	make clean_compile
+
+	rm -rf logs
+	rm -rf merged_cov.ucdb
+	rm -rf merged_cov_html
+
+	echo "Cleanup Complete"
+
+###############################################################################
+# Test Mapping
+###############################################################################
+#
+# test_sanity_reset
+#   TC1  Reset Verification
+#   TC2  Register Read/Write
+#
+# test_manual_mode_matrix
+#   TC3  START
+#   TC4  STOP
+#   TC5  Address
+#   TC6  Single Byte Write
+#   TC7  Single Byte Read
+#   TC10 ACK
+#   TC18 BUSY
+#   TC19 TIP
+#   TC20 RXACK
+#   TC23 Command Auto Clear
+#   TC24 FSM Verification
+#   TC25 Manual Mode Delay Stress
+#
+# test_auto_mode_matrix
+#   TC8  Multi-byte Write
+#   TC9  Multi-byte Read
+#   TC12 Repeated START
+#   TC13 Clock Divider
+#   TC21 Automatic Mode
+#
+# test_reactive_exceptions
+#   TC11 NACK
+#   TC14 Clock Stretching
+#   TC15 Timeout
+#
+# test_interrupt_standalone
+#   TC17 Interrupt Verification
+#
+# test_error_recovery_stress
+#   TC16 SDA Error
+#   TC22 Error Recovery
+#
+###############################################################################
